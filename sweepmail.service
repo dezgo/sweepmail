@@ -3,26 +3,12 @@ Description=Sweepmail - Gmail Inbox Cleaner
 After=network.target
 
 [Service]
-User=sweepmail
-Group=www-data
+User=derek
+Group=derek
 WorkingDirectory=/var/www/sweepmail
-Environment="PATH=/var/www/sweepmail/venv/bin"
-ExecStartPre=/bin/mkdir -p /run/sweepmail
-ExecStartPre=/bin/chown sweepmail:www-data /run/sweepmail
-ExecStart=/var/www/sweepmail/venv/bin/gunicorn app:app -c gunicorn.conf.py
-Restart=on-failure
-RestartSec=5
-
-# Logging
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=sweepmail
-
-# Hardening
-ProtectSystem=strict
-ReadWritePaths=/run/sweepmail /var/log/sweepmail /var/www/sweepmail
-PrivateTmp=true
-NoNewPrivileges=true
+EnvironmentFile=/var/www/sweepmail/.env
+ExecStart=/var/www/sweepmail/venv/bin/gunicorn -w 2 --bind unix:/var/www/sweepmail/sweepmail.sock --error-logfile /var/www/sweepmail/gunicorn-error.log --capture-output --log-level info app:app
+Restart=always
 
 [Install]
 WantedBy=multi-user.target
