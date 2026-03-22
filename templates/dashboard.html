@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sweepmail</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            min-height: 100vh;
+        }
+
+        /* Header */
+        .header {
+            background: #1e293b;
+            border-bottom: 1px solid #334155;
+            padding: 16px 32px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .header h1 { font-size: 20px; }
+        .header-actions { display: flex; gap: 12px; align-items: center; }
+
+        /* Buttons */
+        .btn {
+            padding: 8px 16px;
+            border-radius: 6px;
+            border: none;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .btn-primary { background: #3b82f6; color: white; }
+        .btn-primary:hover { background: #2563eb; }
+        .btn-danger { background: #ef4444; color: white; }
+        .btn-danger:hover { background: #dc2626; }
+        .btn-ghost { background: transparent; color: #94a3b8; border: 1px solid #334155; }
+        .btn-ghost:hover { background: #334155; color: #e2e8f0; }
+        .btn-sm { padding: 4px 10px; font-size: 12px; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        /* Layout */
+        .container { max-width: 1200px; margin: 0 auto; padding: 24px 32px; }
+
+        /* Scan controls */
+        .scan-bar {
+            background: #1e293b;
+            border-radius: 12px;
+            padding: 20px 24px;
+            margin-bottom: 24px;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+        .scan-bar label { color: #94a3b8; font-size: 14px; white-space: nowrap; }
+        .scan-bar select, .scan-bar input {
+            background: #0f172a;
+            border: 1px solid #334155;
+            color: #e2e8f0;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+
+        /* Stats cards */
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        .stat-card {
+            background: #1e293b;
+            border-radius: 12px;
+            padding: 20px;
+        }
+        .stat-card .label { color: #94a3b8; font-size: 13px; margin-bottom: 4px; }
+        .stat-card .value { font-size: 28px; font-weight: 700; }
+        .stat-card .sub { color: #64748b; font-size: 12px; margin-top: 2px; }
+
+        /* Grid layout for panels */
+        .panels {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+            margin-bottom: 24px;
+        }
+
+        /* Panel */
+        .panel {
+            background: #1e293b;
+            border-radius: 12px;
+            overflow: hidden;
+        }
+        .panel-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid #334155;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .panel-header h2 { font-size: 16px; font-weight: 600; }
+        .panel-body { padding: 0; }
+
+        /* Category bars */
+        .cat-row {
+            display: flex;
+            align-items: center;
+            padding: 12px 20px;
+            border-bottom: 1px solid #1e293b;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .cat-row:hover { background: #334155; }
+        .cat-row input[type="checkbox"] {
+            margin-right: 12px;
+            accent-color: #3b82f6;
+            width: 16px; height: 16px;
+        }
+        .cat-dot {
+            width: 10px; height: 10px;
+            border-radius: 50%;
+            margin-right: 10px;
+            flex-shrink: 0;
+        }
+        .cat-name { flex: 1; font-size: 14px; }
+        .cat-count {
+            font-size: 14px;
+            font-weight: 600;
+            margin-right: 8px;
+        }
+        .cat-pct { color: #64748b; font-size: 12px; min-width: 40px; text-align: right; }
+        .cat-bar-bg {
+            width: 80px; height: 6px;
+            background: #334155;
+            border-radius: 3px;
+            margin-left: 12px;
+            overflow: hidden;
+        }
+        .cat-bar-fill { height: 100%; border-radius: 3px; }
+
+        /* Sender rows */
+        .sender-row {
+            display: flex;
+            align-items: center;
+            padding: 10px 20px;
+            border-bottom: 1px solid #1e293b;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .sender-row:hover { background: #334155; }
+        .sender-row input[type="checkbox"] {
+            margin-right: 12px;
+            accent-color: #3b82f6;
+            width: 16px; height: 16px;
+        }
+        .sender-info { flex: 1; min-width: 0; }
+        .sender-name {
+            font-size: 14px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .sender-email {
+            font-size: 12px;
+            color: #64748b;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .sender-badge {
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 4px;
+            margin-left: 8px;
+            white-space: nowrap;
+        }
+        .sender-count {
+            font-size: 14px;
+            font-weight: 600;
+            margin-left: 12px;
+            min-width: 30px;
+            text-align: right;
+        }
+
+        /* Junk score bar */
+        .junk-score {
+            background: #1e293b;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 24px;
+        }
+        .junk-bar-bg {
+            width: 100%; height: 12px;
+            background: #334155;
+            border-radius: 6px;
+            overflow: hidden;
+            margin: 12px 0 8px;
+        }
+        .junk-bar-fill {
+            height: 100%;
+            border-radius: 6px;
+            transition: width 0.6s ease;
+        }
+        .junk-label {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .junk-label span { font-size: 14px; }
+
+        /* Loading overlay */
+        .loading {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 80px 20px;
+            text-align: center;
+        }
+        .spinner {
+            width: 40px; height: 40px;
+            border: 4px solid #334155;
+            border-top-color: #3b82f6;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-bottom: 16px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Toast */
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            background: #1e293b;
+            border: 1px solid #334155;
+            padding: 14px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+            transform: translateY(100px);
+            opacity: 0;
+            transition: all 0.3s ease;
+            z-index: 100;
+        }
+        .toast.show { transform: translateY(0); opacity: 1; }
+        .toast.success { border-color: #22c55e; }
+        .toast.error { border-color: #ef4444; }
+
+        /* Action bar (sticky bottom) */
+        .action-bar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: #1e293b;
+            border-top: 1px solid #334155;
+            padding: 12px 32px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            transform: translateY(100%);
+            transition: transform 0.3s ease;
+            z-index: 50;
+        }
+        .action-bar.visible { transform: translateY(0); }
+        .action-bar .sel-count { color: #94a3b8; font-size: 14px; }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .stats { grid-template-columns: repeat(2, 1fr); }
+            .panels { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Sweepmail</h1>
+        <div class="header-actions">
+            <a href="/auth/logout" class="btn btn-ghost">Sign out</a>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- Scan controls -->
+        <div class="scan-bar">
+            <label for="maxMessages">Messages to scan:</label>
+            <select id="maxMessages">
+                <option value="100">100</option>
+                <option value="250">250</option>
+                <option value="500" selected>500</option>
+                <option value="1000">1,000</option>
+                <option value="2000">2,000</option>
+                <option value="5000">5,000</option>
+            </select>
+            <button class="btn btn-primary" id="scanBtn" onclick="runAnalysis()">Scan Inbox</button>
+            <span id="scanStatus" style="color: #64748b; font-size: 13px;"></span>
+        </div>
+
+        <!-- Loading state -->
+        <div id="loadingState" style="display: none;">
+            <div class="loading">
+                <div class="spinner"></div>
+                <p>Scanning your inbox...</p>
+                <p style="color: #64748b; font-size: 13px; margin-top: 8px;">This may take a minute for large inboxes</p>
+            </div>
+        </div>
+
+        <!-- Results (hidden until scan) -->
+        <div id="results" style="display: none;">
+            <!-- Stats -->
+            <div class="stats">
+                <div class="stat-card">
+                    <div class="label">Messages Scanned</div>
+                    <div class="value" id="statTotal">—</div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">Unique Senders</div>
+                    <div class="value" id="statSenders">—</div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">Inbox Size</div>
+                    <div class="value" id="statSize">—</div>
+                    <div class="sub">MB</div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">Cleanable</div>
+                    <div class="value" id="statJunk">—</div>
+                    <div class="sub" id="statJunkSub"></div>
+                </div>
+            </div>
+
+            <!-- Junk score -->
+            <div class="junk-score">
+                <div class="junk-label">
+                    <span><strong>Junk Score</strong></span>
+                    <span id="junkPctLabel">—</span>
+                </div>
+                <div class="junk-bar-bg">
+                    <div class="junk-bar-fill" id="junkBar" style="width: 0%;"></div>
+                </div>
+            </div>
+
+            <!-- Panels -->
+            <div class="panels">
+                <!-- Categories -->
+                <div class="panel">
+                    <div class="panel-header">
+                        <h2>Categories</h2>
+                        <button class="btn btn-danger btn-sm" onclick="trashSelectedCategories()" id="trashCatBtn" disabled>
+                            Trash Selected
+                        </button>
+                    </div>
+                    <div class="panel-body" id="categoryList"></div>
+                </div>
+
+                <!-- Top Senders -->
+                <div class="panel">
+                    <div class="panel-header">
+                        <h2>Top Senders</h2>
+                        <button class="btn btn-danger btn-sm" onclick="trashSelectedSenders()" id="trashSenderBtn" disabled>
+                            Trash Selected
+                        </button>
+                    </div>
+                    <div class="panel-body" id="senderList"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast notification -->
+    <div class="toast" id="toast"></div>
+
+    <script>
+        let analysisData = null;
+
+        async function runAnalysis() {
+            const maxMessages = document.getElementById('maxMessages').value;
+            const scanBtn = document.getElementById('scanBtn');
+            const loading = document.getElementById('loadingState');
+            const results = document.getElementById('results');
+
+            scanBtn.disabled = true;
+            scanBtn.textContent = 'Scanning...';
+            loading.style.display = 'block';
+            results.style.display = 'none';
+
+            try {
+                const resp = await fetch(`/api/analyze?max=${maxMessages}`);
+                if (resp.status === 401) {
+                    window.location.href = '/auth/login';
+                    return;
+                }
+                analysisData = await resp.json();
+                renderResults(analysisData);
+                loading.style.display = 'none';
+                results.style.display = 'block';
+            } catch (err) {
+                showToast('Scan failed: ' + err.message, 'error');
+                loading.style.display = 'none';
+            } finally {
+                scanBtn.disabled = false;
+                scanBtn.textContent = 'Scan Inbox';
+            }
+        }
+
+        function renderResults(data) {
+            // Stats
+            document.getElementById('statTotal').textContent = data.total.toLocaleString();
+            document.getElementById('statSenders').textContent = data.unique_senders.toLocaleString();
+            document.getElementById('statSize').textContent = data.total_size_mb;
+            document.getElementById('statJunk').textContent = data.junk_count.toLocaleString();
+            document.getElementById('statJunkSub').textContent = `${data.junk_pct}% of inbox`;
+
+            // Junk score bar
+            const junkColor = data.junk_pct < 30 ? '#22c55e' : data.junk_pct < 60 ? '#f59e0b' : '#ef4444';
+            document.getElementById('junkBar').style.width = data.junk_pct + '%';
+            document.getElementById('junkBar').style.background = junkColor;
+            document.getElementById('junkPctLabel').textContent = data.junk_pct + '% cleanable';
+
+            // Categories
+            const catList = document.getElementById('categoryList');
+            catList.innerHTML = data.categories.map(cat => `
+                <label class="cat-row">
+                    <input type="checkbox" name="cat" value="${cat.name}" onchange="updateButtons()">
+                    <span class="cat-dot" style="background: ${cat.color};"></span>
+                    <span class="cat-name">${cat.name}</span>
+                    <span class="cat-count">${cat.count}</span>
+                    <span class="cat-pct">${cat.pct}%</span>
+                    <span class="cat-bar-bg">
+                        <span class="cat-bar-fill" style="width: ${cat.pct}%; background: ${cat.color};"></span>
+                    </span>
+                </label>
+            `).join('');
+
+            // Senders
+            const senderList = document.getElementById('senderList');
+            senderList.innerHTML = data.senders.map(s => `
+                <label class="sender-row">
+                    <input type="checkbox" name="sender" value="${escapeHtml(s.raw)}" onchange="updateButtons()">
+                    <div class="sender-info">
+                        <div class="sender-name">${escapeHtml(s.name)}</div>
+                        <div class="sender-email">${escapeHtml(s.email)}</div>
+                    </div>
+                    <span class="sender-badge" style="background: ${s.color}22; color: ${s.color};">${s.category}</span>
+                    <span class="sender-count">${s.count}</span>
+                </label>
+            `).join('');
+        }
+
+        function updateButtons() {
+            const catChecked = document.querySelectorAll('input[name="cat"]:checked').length;
+            const senderChecked = document.querySelectorAll('input[name="sender"]:checked').length;
+            document.getElementById('trashCatBtn').disabled = catChecked === 0;
+            document.getElementById('trashSenderBtn').disabled = senderChecked === 0;
+        }
+
+        async function trashSelectedCategories() {
+            const checked = [...document.querySelectorAll('input[name="cat"]:checked')].map(el => el.value);
+            if (!checked.length) return;
+
+            const count = checked.reduce((sum, cat) => {
+                const c = analysisData.categories.find(x => x.name === cat);
+                return sum + (c ? c.count : 0);
+            }, 0);
+
+            if (!confirm(`Trash ${count} emails in: ${checked.join(', ')}?\n\nEmails go to Trash (recoverable for 30 days).`)) return;
+
+            const btn = document.getElementById('trashCatBtn');
+            btn.disabled = true;
+            btn.textContent = 'Trashing...';
+
+            try {
+                const resp = await fetch('/api/trash_by_category', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        categories: checked,
+                        max: document.getElementById('maxMessages').value
+                    }),
+                });
+                const result = await resp.json();
+                showToast(`Trashed ${result.trashed} emails`, 'success');
+                // Re-scan
+                setTimeout(() => runAnalysis(), 1000);
+            } catch (err) {
+                showToast('Failed: ' + err.message, 'error');
+            } finally {
+                btn.textContent = 'Trash Selected';
+                btn.disabled = false;
+            }
+        }
+
+        async function trashSelectedSenders() {
+            const checked = [...document.querySelectorAll('input[name="sender"]:checked')].map(el => el.value);
+            if (!checked.length) return;
+
+            const count = checked.reduce((sum, raw) => {
+                const s = analysisData.senders.find(x => x.raw === raw);
+                return sum + (s ? s.count : 0);
+            }, 0);
+
+            if (!confirm(`Trash ${count} emails from ${checked.length} sender(s)?\n\nEmails go to Trash (recoverable for 30 days).`)) return;
+
+            const btn = document.getElementById('trashSenderBtn');
+            btn.disabled = true;
+            btn.textContent = 'Trashing...';
+
+            try {
+                const resp = await fetch('/api/trash_by_sender', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        senders: checked,
+                        max: document.getElementById('maxMessages').value
+                    }),
+                });
+                const result = await resp.json();
+                showToast(`Trashed ${result.trashed} emails`, 'success');
+                setTimeout(() => runAnalysis(), 1000);
+            } catch (err) {
+                showToast('Failed: ' + err.message, 'error');
+            } finally {
+                btn.textContent = 'Trash Selected';
+                btn.disabled = false;
+            }
+        }
+
+        function showToast(msg, type = 'success') {
+            const toast = document.getElementById('toast');
+            toast.textContent = msg;
+            toast.className = 'toast show ' + type;
+            setTimeout(() => toast.className = 'toast', 3000);
+        }
+
+        function escapeHtml(str) {
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>
