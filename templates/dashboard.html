@@ -311,8 +311,8 @@
         <div id="loadingState" style="display: none;">
             <div class="loading">
                 <div class="spinner"></div>
-                <p>Scanning your inbox...</p>
-                <p style="color: #64748b; font-size: 13px; margin-top: 8px;">This may take a minute for large inboxes</p>
+                <p id="loadingStatus">Scanning your inbox...</p>
+                <p id="loadingProgress" style="color: #64748b; font-size: 13px; margin-top: 8px;"></p>
             </div>
         </div>
 
@@ -383,6 +383,16 @@
 
     <script>
         let analysisData = null;
+        let currentJobId = null;
+
+        const STATUS_LABELS = {
+            starting: 'Starting scan...',
+            listing: 'Finding messages...',
+            fetching: 'Fetching email details...',
+            categorizing: 'Categorizing emails...',
+            done: 'Done!',
+            error: 'Scan failed',
+        };
 
         async function runAnalysis() {
             const maxMessages = document.getElementById('maxMessages').value;
@@ -394,23 +404,64 @@
             scanBtn.textContent = 'Scanning...';
             loading.style.display = 'block';
             results.style.display = 'none';
+            document.getElementById('loadingStatus').textContent = 'Starting scan...';
+            document.getElementById('loadingProgress').textContent = '';
 
             try {
-                const resp = await fetch(`/api/analyze?max=${maxMessages}`);
-                if (resp.status === 401) {
+                // Start the scan
+                const startResp = await fetch('/api/scan', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ max: parseInt(maxMessages) }),
+                });
+                if (startResp.status === 401) {
                     window.location.href = '/auth/login';
                     return;
                 }
-                analysisData = await resp.json();
-                renderResults(analysisData);
-                loading.style.display = 'none';
-                results.style.display = 'block';
+                const { job_id } = await startResp.json();
+                currentJobId = job_id;
+
+                // Poll for progress
+                await pollJob(job_id);
             } catch (err) {
                 showToast('Scan failed: ' + err.message, 'error');
                 loading.style.display = 'none';
             } finally {
                 scanBtn.disabled = false;
                 scanBtn.textContent = 'Scan Inbox';
+            }
+        }
+
+        async function pollJob(jobId) {
+            const loading = document.getElementById('loadingState');
+            const results = document.getElementById('results');
+
+            while (true) {
+                await new Promise(r => setTimeout(r, 500));
+
+                const resp = await fetch(`/api/scan/${jobId}`);
+                const job = await resp.json();
+
+                // Update loading UI
+                document.getElementById('loadingStatus').textContent = STATUS_LABELS[job.status] || job.status;
+                if (job.status === 'fetching' && job.total > 0) {
+                    document.getElementById('loadingProgress').textContent =
+                        `${job.progress.toLocaleString()} / ${job.total.toLocaleString()} messages`;
+                }
+
+                if (job.status === 'done') {
+                    analysisData = job.result;
+                    renderResults(analysisData);
+                    loading.style.display = 'none';
+                    results.style.display = 'block';
+                    return;
+                }
+
+                if (job.status === 'error') {
+                    showToast('Scan failed: ' + job.error, 'error');
+                    loading.style.display = 'none';
+                    return;
+                }
             }
         }
 
@@ -486,7 +537,7 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         categories: checked,
-                        max: document.getElementById('maxMessages').value
+                        job_id: currentJobId,
                     }),
                 });
                 const result = await resp.json();
@@ -522,7 +573,7 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         senders: checked,
-                        max: document.getElementById('maxMessages').value
+                        job_id: currentJobId,
                     }),
                 });
                 const result = await resp.json();

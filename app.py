@@ -2,10 +2,11 @@
 Sweepmail — Gmail Inbox Cleaner
 """
 
-import json
 import os
 import re
 import secrets
+import threading
+import uuid
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -30,6 +31,9 @@ SCOPES = [
 # Only allow HTTP in local dev — production runs behind HTTPS
 if os.environ.get("FLASK_ENV") == "development":
     os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+
+# In-memory job store: job_id -> {status, progress, total, result, error}
+jobs = {}
 
 # ---------------------------------------------------------------------------
 # Categorisation rules
@@ -119,6 +123,14 @@ def categorize_email(sender: str, subject: str, snippet: str, headers: dict) -> 
 # ---------------------------------------------------------------------------
 
 
+def build_gmail_service(creds_data: dict):
+    """Build a Gmail service from credentials dict."""
+    creds = Credentials(**creds_data)
+    if creds.expired and creds.refresh_token:
+        creds.refresh(Request())
+    return build("gmail", "v1", credentials=creds)
+
+
 def get_gmail_service():
     """Build a Gmail service from session credentials."""
     creds_data = session.get("credentials")
@@ -176,7 +188,7 @@ def _parse_message(msg: dict) -> dict:
     }
 
 
-def batch_get_message_details(service, msg_ids: list) -> list:
+def batch_get_message_details(service, msg_ids: list, job_id: str = None) -> list:
     all_results = {}
     for batch_start in range(0, len(msg_ids), 100):
         batch_ids = msg_ids[batch_start: batch_start + 100]
@@ -198,13 +210,28 @@ def batch_get_message_details(service, msg_ids: list) -> list:
             batch_req.add(req, callback=_callback)
         batch_req.execute()
 
+        # Update job progress
+        if job_id and job_id in jobs:
+            jobs[job_id]["progress"] = min(batch_start + 100, len(msg_ids))
+
     return [all_results[mid] for mid in msg_ids if mid in all_results]
 
 
-def analyze_inbox(service, max_messages=500):
+def analyze_inbox(service, max_messages=500, job_id=None):
+    if job_id:
+        jobs[job_id]["status"] = "listing"
     raw_messages = fetch_messages(service, max_results=max_messages)
     msg_ids = [m["id"] for m in raw_messages]
-    all_details = batch_get_message_details(service, msg_ids)
+
+    if job_id:
+        jobs[job_id]["status"] = "fetching"
+        jobs[job_id]["total"] = len(msg_ids)
+        jobs[job_id]["progress"] = 0
+
+    all_details = batch_get_message_details(service, msg_ids, job_id=job_id)
+
+    if job_id:
+        jobs[job_id]["status"] = "categorizing"
 
     emails = []
     sender_counter = Counter()
@@ -245,6 +272,47 @@ def analyze_inbox(service, max_messages=500):
     }
 
 
+def _build_response_data(analysis: dict) -> dict:
+    """Build the JSON response from an analysis result."""
+    categories = []
+    for cat, count in sorted(analysis["category_counter"].items(), key=lambda x: -x[1]):
+        categories.append({
+            "name": cat,
+            "count": count,
+            "color": CATEGORY_COLORS.get(cat, "#6b7280"),
+            "pct": round(count / len(analysis["emails"]) * 100, 1) if analysis["emails"] else 0,
+        })
+
+    senders = []
+    sender_counter = Counter(analysis["sender_counter"])
+    for sender, count in sender_counter.most_common(30):
+        cats = Counter(e["category"] for e in analysis["sender_emails"][sender])
+        top_cat = cats.most_common(1)[0][0]
+        name, email = extract_name_and_email(sender)
+        senders.append({
+            "raw": sender,
+            "name": name,
+            "email": email,
+            "count": count,
+            "category": top_cat,
+            "color": CATEGORY_COLORS.get(top_cat, "#6b7280"),
+        })
+
+    junk_cats = ["Newsletter", "Automated", "Social", "Shopping"]
+    junk_count = sum(analysis["category_counter"].get(c, 0) for c in junk_cats)
+    junk_pct = round(junk_count / len(analysis["emails"]) * 100, 1) if analysis["emails"] else 0
+
+    return {
+        "total": len(analysis["emails"]),
+        "unique_senders": len(analysis["sender_counter"]),
+        "total_size_mb": round(analysis["total_size"] / (1024 * 1024), 1),
+        "junk_count": junk_count,
+        "junk_pct": junk_pct,
+        "categories": categories,
+        "senders": senders,
+    }
+
+
 def _batch_trash(service, msg_ids: list):
     for i in range(0, len(msg_ids), 100):
         batch = msg_ids[i: i + 100]
@@ -252,6 +320,24 @@ def _batch_trash(service, msg_ids: list):
             userId="me",
             body={"ids": batch, "addLabelIds": ["TRASH"], "removeLabelIds": ["INBOX"]},
         ).execute()
+
+
+# ---------------------------------------------------------------------------
+# Background scan worker
+# ---------------------------------------------------------------------------
+
+
+def _run_scan(job_id: str, creds_data: dict, max_messages: int):
+    """Run inbox analysis in a background thread."""
+    try:
+        service = build_gmail_service(creds_data)
+        analysis = analyze_inbox(service, max_messages=max_messages, job_id=job_id)
+        jobs[job_id]["result"] = _build_response_data(analysis)
+        jobs[job_id]["analysis"] = analysis
+        jobs[job_id]["status"] = "done"
+    except Exception as e:
+        jobs[job_id]["status"] = "error"
+        jobs[job_id]["error"] = str(e)
 
 
 # ---------------------------------------------------------------------------
@@ -300,54 +386,52 @@ def auth_logout():
     return redirect(url_for("index"))
 
 
-@app.route("/api/analyze")
-def api_analyze():
-    service = get_gmail_service()
-    if not service:
+@app.route("/api/scan", methods=["POST"])
+def api_scan():
+    """Start a background scan. Returns a job ID to poll."""
+    creds_data = session.get("credentials")
+    if not creds_data:
         return jsonify({"error": "Not authenticated"}), 401
 
-    max_messages = request.args.get("max", 500, type=int)
-    max_messages = min(max_messages, 5000)
-    analysis = analyze_inbox(service, max_messages=max_messages)
+    data = request.get_json() or {}
+    max_messages = min(data.get("max", 500), 5000)
 
-    # Build response data
-    categories = []
-    for cat, count in sorted(analysis["category_counter"].items(), key=lambda x: -x[1]):
-        categories.append({
-            "name": cat,
-            "count": count,
-            "color": CATEGORY_COLORS.get(cat, "#6b7280"),
-            "pct": round(count / len(analysis["emails"]) * 100, 1) if analysis["emails"] else 0,
-        })
+    job_id = str(uuid.uuid4())
+    jobs[job_id] = {
+        "status": "starting",
+        "progress": 0,
+        "total": 0,
+        "result": None,
+        "analysis": None,
+        "error": None,
+    }
 
-    senders = []
-    sender_counter = Counter(analysis["sender_counter"])
-    for sender, count in sender_counter.most_common(30):
-        cats = Counter(e["category"] for e in analysis["sender_emails"][sender])
-        top_cat = cats.most_common(1)[0][0]
-        name, email = extract_name_and_email(sender)
-        senders.append({
-            "raw": sender,
-            "name": name,
-            "email": email,
-            "count": count,
-            "category": top_cat,
-            "color": CATEGORY_COLORS.get(top_cat, "#6b7280"),
-        })
+    thread = threading.Thread(target=_run_scan, args=(job_id, creds_data, max_messages))
+    thread.daemon = True
+    thread.start()
 
-    junk_cats = ["Newsletter", "Automated", "Social", "Shopping"]
-    junk_count = sum(analysis["category_counter"].get(c, 0) for c in junk_cats)
-    junk_pct = round(junk_count / len(analysis["emails"]) * 100, 1) if analysis["emails"] else 0
+    return jsonify({"job_id": job_id})
 
-    return jsonify({
-        "total": len(analysis["emails"]),
-        "unique_senders": len(analysis["sender_counter"]),
-        "total_size_mb": round(analysis["total_size"] / (1024 * 1024), 1),
-        "junk_count": junk_count,
-        "junk_pct": junk_pct,
-        "categories": categories,
-        "senders": senders,
-    })
+
+@app.route("/api/scan/<job_id>")
+def api_scan_status(job_id):
+    """Poll scan progress."""
+    job = jobs.get(job_id)
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+
+    resp = {
+        "status": job["status"],
+        "progress": job["progress"],
+        "total": job["total"],
+    }
+
+    if job["status"] == "done":
+        resp["result"] = job["result"]
+    elif job["status"] == "error":
+        resp["error"] = job["error"]
+
+    return jsonify(resp)
 
 
 @app.route("/api/trash", methods=["POST"])
@@ -367,16 +451,20 @@ def api_trash():
 
 @app.route("/api/trash_by_sender", methods=["POST"])
 def api_trash_by_sender():
+    """Trash emails by sender using the last scan's data."""
     service = get_gmail_service()
     if not service:
         return jsonify({"error": "Not authenticated"}), 401
 
     data = request.get_json()
     senders = data.get("senders", [])
-    max_messages = data.get("max", 500)
+    job_id = data.get("job_id")
 
-    # Re-fetch to get message IDs for these senders
-    analysis = analyze_inbox(service, max_messages=max_messages)
+    job = jobs.get(job_id) if job_id else None
+    if not job or not job.get("analysis"):
+        return jsonify({"error": "No scan data found. Run a scan first."}), 400
+
+    analysis = job["analysis"]
     msg_ids = []
     for sender in senders:
         msg_ids.extend(e["id"] for e in analysis["sender_emails"].get(sender, []))
@@ -390,15 +478,20 @@ def api_trash_by_sender():
 
 @app.route("/api/trash_by_category", methods=["POST"])
 def api_trash_by_category():
+    """Trash emails by category using the last scan's data."""
     service = get_gmail_service()
     if not service:
         return jsonify({"error": "Not authenticated"}), 401
 
     data = request.get_json()
     categories = data.get("categories", [])
-    max_messages = data.get("max", 500)
+    job_id = data.get("job_id")
 
-    analysis = analyze_inbox(service, max_messages=max_messages)
+    job = jobs.get(job_id) if job_id else None
+    if not job or not job.get("analysis"):
+        return jsonify({"error": "No scan data found. Run a scan first."}), 400
+
+    analysis = job["analysis"]
     msg_ids = []
     for cat in categories:
         msg_ids.extend(e["id"] for e in analysis["category_emails"].get(cat, []))

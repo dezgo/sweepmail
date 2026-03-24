@@ -7,7 +7,7 @@ User=derek
 Group=derek
 WorkingDirectory=/var/www/sweepmail
 EnvironmentFile=/var/www/sweepmail/.env
-ExecStart=/var/www/sweepmail/venv/bin/gunicorn -w 2 --bind unix:/var/www/sweepmail/sweepmail.sock --error-logfile /var/www/sweepmail/gunicorn-error.log --capture-output --log-level info app:app
+ExecStart=/var/www/sweepmail/venv/bin/gunicorn -w 2 -t 120 --bind unix:/var/www/sweepmail/sweepmail.sock --error-logfile /var/www/sweepmail/gunicorn-error.log --capture-output --log-level info app:app
 Restart=always
 
 [Install]
